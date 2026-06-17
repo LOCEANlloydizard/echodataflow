@@ -33,7 +33,7 @@ Echodataflow streamlines echosounder data processing by combining [Prefect](http
    clone the repo and install it like below:
    ```bash
    git clone git+https://github.com/echostack-org/echodataflow.git  # clone the repo
-   pip install -e .[test,lint,docs]  # install in editable mode with dev tools
+   pip install -e ".[test,lint,docs]"  # install in editable mode with dev tools
    ```
    
 
@@ -61,7 +61,7 @@ Echodataflow streamlines echosounder data processing by combining [Prefect](http
    python -m echodataflow.deployment.deploy_cli run \
    --source-mode local \
    --default-work-pool-name local \
-   --param-config REPO_DIRECTORY/recipes/params/config_{MISSION_NAME}.yaml \
+   --param-config REPO_DIRECTORY/recipes/params/params_{MISSION_NAME}.yaml \
    --deploy-spec REPO_DIRECTORY/recipes/deploy/deploy_{MISSION_NAME}.yaml
    ```
 
@@ -80,12 +80,96 @@ Echodataflow streamlines echosounder data processing by combining [Prefect](http
    git clone https://github.com/echostack-org/echodataflow-recipes.git
    ```
 
-5. Deploy and run the ship pipeline:
+5. Deploy and run the cloud pipeline:
    ```bash
-   python -m echodataflow.deployment.deploy_cli run --default-work-pool-name local --param-config REPO_DIRECTORY/recipes/params/config_cloud_2025.yaml --deploy-spec REPO_DIRECTORY/recipes/deploy/deploy_cloud_2025.yaml --source-mode local
+   python -m echodataflow.deployment.deploy_cli run \
+   --source-mode local \
+   --default-work-pool-name local \
+   --param-config REPO_DIRECTORY/recipes/params/params_{MISSION_NAME}.yaml \
+   --deploy-spec REPO_DIRECTORY/recipes/deploy/deploy_{MISSION_NAME}.yaml
    ```
 
 6. Start up system services that hosts the 2 sets of visualization
+
+
+## Running Local Prefect Services on macOS (launchd)
+
+To run a local Prefect server and worker as background services on macOS, you can
+use launchd with the provided plist templates:
+
+- `src/echodataflow/services/deploy_prefect_server.launchd.plist`
+- `src/echodataflow/services/deploy_prefect_worker.launchd.plist`
+
+These templates intentionally use direct one-line `ProgramArguments` commands, similar
+to `.service` `ExecStart` usage, with no wrapper shell script required.
+
+1. Copy and customize the templates for your user:
+   ```shell
+   mkdir -p ~/.config/echodataflow ~/Library/LaunchAgents ~/.local/var/log/echodataflow
+   cp src/echodataflow/services/services.env.example ~/.config/echodataflow/services.env
+   cp src/echodataflow/services/deploy_prefect_server.launchd.plist ~/Library/LaunchAgents/org.echodataflow.prefect-server.plist
+   cp src/echodataflow/services/deploy_prefect_worker.launchd.plist ~/Library/LaunchAgents/org.echodataflow.prefect-worker.plist
+   ```
+
+2. Edit `~/.config/echodataflow/services.env` as needed:
+   - Adjust `ECHODATAFLOW_ENV`
+   - Adjust `ECHODATAFLOW_HOME`
+   - Adjust `MAMBA_BIN`
+   - Adjust `PREFECT_POOL`
+   - Adjust `PREFECT_API_URL`
+
+3. Load and start services:
+   ```shell
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.echodataflow.prefect-server.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.echodataflow.prefect-worker.plist
+   launchctl kickstart -k gui/$(id -u)/org.echodataflow.prefect-server
+   launchctl kickstart -k gui/$(id -u)/org.echodataflow.prefect-worker
+   ```
+
+4. Check status and logs:
+   ```shell
+   # make sure "state = running" and "runs" not increasing
+   launchctl print gui/$(id -u)/org.echodataflow.prefect-server
+   launchctl print gui/$(id -u)/org.echodataflow.prefect-worker
+   # -f to follow logs in real time
+   tail -n 100 ~/.local/var/log/echodataflow/prefect-server.err.log
+   tail -n 100 ~/.local/var/log/echodataflow/prefect-worker.err.log
+   ```
+
+5. To stop and unload services:
+   ```shell
+   launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/org.echodataflow.prefect-server.plist
+   launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/org.echodataflow.prefect-worker.plist
+   ```
+
+6. SQLite health checks (local Prefect server):
+   ```shell
+   sqlite3 ~/.prefect/prefect.db "PRAGMA quick_check;"
+   sqlite3 ~/.prefect/prefect.db "PRAGMA integrity_check;"
+   ```
+
+7. If server startup keeps failing with SQLite lock errors, reset local DB safely:
+   ```shell
+   # stop services first
+   launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/org.echodataflow.prefect-worker.plist
+   launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/org.echodataflow.prefect-server.plist
+
+   # archive existing local Prefect DB files (do not delete first)
+   ts=$(date +%Y%m%d_%H%M%S)
+   mkdir -p ~/.prefect/db-backups/$ts
+   mv ~/.prefect/prefect.db* ~/.prefect/db-backups/$ts/ 2>/dev/null || true
+
+   # start server, then worker
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.echodataflow.prefect-server.plist
+   launchctl kickstart -k gui/$(id -u)/org.echodataflow.prefect-server
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.echodataflow.prefect-worker.plist
+   launchctl kickstart -k gui/$(id -u)/org.echodataflow.prefect-worker
+   ```
+
+Notes:
+- `ThrottleInterval=30` in plist files helps avoid aggressive restart loops.
+- `database is locked` usually means SQLite write contention, not corruption.
+- For heavier multi-flow usage, move Prefect server DB to Postgres.
 
 
 
