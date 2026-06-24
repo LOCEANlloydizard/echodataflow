@@ -176,8 +176,6 @@ Notes:
 To run a local Prefect server and worker as background services on Windows, you can
 use PowerShell with Windows Task Scheduler and the provided templates:
 
-- `src/echodataflow/services/deploy_prefect_server.windows.ps1`
-- `src/echodataflow/services/deploy_prefect_worker.windows.ps1`
 - `src/echodataflow/services/deploy_prefect_server.windows.task.xml`
 - `src/echodataflow/services/deploy_prefect_worker.windows.task.xml`
 
@@ -208,13 +206,9 @@ use PowerShell with Windows Task Scheduler and the provided templates:
      "$HOME\.config\echodataflow\prefect-worker.task.xml"
    ```
 
-4. Edit both copied XML files and replace:
-
-   ```text
-   C:\path\to\echodataflow
-   ```
-
-   with the absolute path to your local Echodataflow repository.
+4. Both XML templates are self-contained and read their runtime configuration
+   from `$HOME\.config\echodataflow\services.env`, so they do not need separate
+   `deploy_prefect_*.windows.ps1` files or hard-coded repository script paths.
 
 5. Register the scheduled tasks:
    ```powershell
