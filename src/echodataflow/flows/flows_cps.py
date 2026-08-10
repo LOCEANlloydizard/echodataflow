@@ -46,6 +46,86 @@ def apply_2d_convolution(da):
 
     return convolved
 
+@task(name="format_csv")
+def export_to_echoview_csv(ds: xr.Dataset, output_filepath: str, channel_name: str = None):
+    """
+    Exports an xarray Dataset of NASC values to a CSV format emulating 
+    'Transect_002-1_interpolated.csv'.
+    
+    Parameters:
+    - ds: xarray.Dataset containing NASC, latitude, longitude, and ping_time.
+    - output_filepath: str, path for the resulting CSV file.
+    - channel_name: str (optional), specify a channel to export. If None, exports all.
+    """
+    # Select specific channel if provided
+    if channel_name is not None:
+        if 'channel' in ds.dims:
+            ds = ds.sel(channel=channel_name)
+            
+    # Flatten the xarray dataset to a pandas DataFrame
+    df = ds.to_dataframe().reset_index()
+    
+    # Initialize the output dataframe
+    out_df = pd.DataFrame()
+    
+    # 1. Identifiers & Indexing
+    # Adding BOM-encoded Process_ID to perfectly match the file's header anomalies if needed, 
+    # but standardized to 'Process_ID' for clean mapping
+    out_df['Process_ID'] = 1928 
+    out_df['Interval'] = pd.factorize(df['distance'])[0] + 1
+    out_df['Layer'] = pd.factorize(df['depth'])[0] + 1
+    
+    # 2. Backscatter Data
+    out_df['Sv_mean'] = -999.0  # Placeholder, as Sv_mean is not in the provided dataset
+    out_df['NASC'] = df['NASC'].fillna(0.0) 
+    
+    # 3. Depth & Layer Metrics
+    # Calculate depth step based on the depth coordinate differences
+    depth_step = np.diff(ds['depth'].values)[0] if len(ds['depth']) > 1 else 5.0
+    
+    out_df['Height_mean'] = depth_step
+    out_df['Depth_mean'] = df['depth']
+    out_df['Layer_depth_min'] = df['depth'] - (depth_step / 2)
+    out_df['Layer_depth_max'] = df['depth'] + (depth_step / 2)
+    
+    # 4. Ping Metadata
+    out_df['Ping_S'] = 0  # Placeholder
+    out_df['Ping_E'] = 0  # Placeholder
+    out_df['Dist_M'] = df['distance']*1852
+    
+    # Format dates to YYYYMMDD and times to HH:MM:SS.ffff
+    out_df['Date_M'] = df['ping_time'].dt.strftime('%Y%m%d')
+    out_df['Time_M'] = df['ping_time'].dt.strftime('%H:%M:%S.%f').str[:-2]
+    
+    # 5. Geolocation
+    out_df['Lat_M'] = df['latitude']
+    out_df['Lon_M'] = df['longitude']
+    
+    # 6. Remaining Static/Dummy Columns from the target format
+    dummy_cols = {
+        'Noise_Sv_1m': -999.0,
+        'Minimum_Sv_threshold_applied': 1,
+        'Maximum_Sv_threshold_applied': 0,
+        'Standard_deviation': 0.0,
+        'Thickness_mean': depth_step,
+        'Range_mean': df['depth'],
+        'Exclude_below_line_range_mean': 999.0,
+        'Exclude_above_line_range_mean': 0.0,
+    }
+    
+    for col, val in dummy_cols.items():
+        out_df[col] = val
+        
+    # Optional: If the dataset includes multiple channels, we append the channel to the filename or add a column.
+    # By default, we write the exact schema requested.
+    if 'channel' in df.columns and channel_name is None:
+        out_df['Channel'] = df['channel']
+        
+    # Export to CSV (using utf-8-sig to append the BOM if you strictly need 'ï»¿Process_ID' to match)
+    out_df.to_csv(output_filepath, index=False, encoding='utf-8-sig')
+    print(f"Dataset successfully exported to {output_filepath}")
+
+
 
 def _pick_channel_by_frequency(ds: xr.Dataset, freq_hz: float) -> str:
     if "frequency_nominal" in ds:
@@ -107,10 +187,10 @@ def task_compute_NASC(
         ds_for_nasc = ds_Sv_masked.assign(Sv=ds_Sv_masked["Sv_masked"])
         ds_NASC = ep.commongrid.compute_NASC(
             ds_Sv=ds_for_nasc,
-            range_bin="10m",
-            dist_bin="0.5nmi",
+            range_bin = "5m", 
+            dist_bin = "0.0539957nmi"
         )
-
+        
         logger.info(f"Saving NASC to zarr: {NASC_filename}")
         ds_NASC.to_zarr(
             store=Path(path_NASC_zarr) / NASC_filename,
