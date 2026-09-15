@@ -132,11 +132,17 @@ def build_Sv_ledger(raw_files: pd.DataFrame) -> pd.DataFrame:
     ledger["Sv_filename"] = pd.NA
     ledger["raw2Sv_status"] = "pending"
     ledger["attempt_count"] = 0
-    ledger["first_ping_time"] = pd.NaT
-    ledger["last_ping_time"] = pd.NaT
+    ledger["first_ping_time"] = pd.Series(
+        pd.NaT, index=ledger.index, dtype="datetime64[ns, UTC]"
+    )
+    ledger["last_ping_time"] = pd.Series(
+        pd.NaT, index=ledger.index, dtype="datetime64[ns, UTC]"
+    )
     ledger["error"] = ""
     ledger["Sv_cleanup_status"] = "pending"
-    ledger["Sv_deleted_at"] = pd.NaT
+    ledger["Sv_deleted_at"] = pd.Series(
+        pd.NaT, index=ledger.index, dtype="datetime64[ns, UTC]"
+    )
     ledger["Sv_cleanup_error"] = ""
     return ledger.sort_values("timestamp").reset_index(drop=True)
 
@@ -198,7 +204,10 @@ def build_MVBS_ledger(
                 ),
             }
         )
-    return pd.DataFrame.from_records(records, columns=MVBS_COLUMNS_POSTPROCESSING)
+    ledger = pd.DataFrame.from_records(records, columns=MVBS_COLUMNS_POSTPROCESSING)
+    for column in ("first_ping_time", "last_ping_time"):
+        ledger[column] = pd.to_datetime(ledger[column], utc=True)
+    return ledger
 
 
 def failure_state(attempt_count: int, max_flow_run_attempts: int) -> tuple[int, str]:
@@ -307,7 +316,10 @@ def build_prediction_ledger(
                 "error": "No MVBS data in the prediction window" if is_no_data else "",
             }
         )
-    return pd.DataFrame.from_records(records, columns=PREDICTION_COLUMNS_POSTPROCESSING)
+    ledger = pd.DataFrame.from_records(records, columns=PREDICTION_COLUMNS_POSTPROCESSING)
+    for column in ("first_ping_time", "last_ping_time"):
+        ledger[column] = pd.to_datetime(ledger[column], utc=True)
+    return ledger
 
 
 def read_or_create_ledger(
